@@ -32,7 +32,7 @@ for epoch in range(10001):
     pred_y = 1 / (1 + np.exp(-z3))
 
     # loss
-    loss = 0.5 * np.square(pred_y - y).sum() / y.size
+    loss = - (y * np.log(pred_y) + (1 - y) * np.log(1 - pred_y)).mean()
     print('epoch {}, loss {}'.format(epoch, loss))
 
     # 输出训练时的准确率
@@ -45,7 +45,7 @@ for epoch in range(10001):
 
     # 使用链式求导计算梯度（和反向传播是一致的）
     grad_z3 = pred_y - y
-    grad_theta2 = grad_z3.T.dot(a2).T
+    grad_theta2 = a2.T.dot(grad_z3)
     grad_a2 = grad_z3.dot(theta2.T)
     grad_z2 = grad_a2 * a2 * (1 - a2)
     grad_theta1 = X.T.dot(grad_z2)

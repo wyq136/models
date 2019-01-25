@@ -26,12 +26,12 @@ for epoch in range(1000):
     pred_y = w * x + b
 
     # loss
-    loss = 0.5 * np.square(pred_y - y).sum() / y.size
+    loss = 0.5 * np.square(pred_y - y).mean()
     print('epoch {}, loss {}'.format(epoch, loss))
 
     # 计算梯度（求导）
-    grad_w = ((pred_y - y) * x).sum() / y.size
-    grad_b = (pred_y - y).sum() / y.size
+    grad_w = ((pred_y - y) * x).mean()
+    grad_b = (pred_y - y).mean()
 
     # 更新参数
     w -= learning_rate * grad_w

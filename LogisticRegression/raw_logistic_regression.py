@@ -22,7 +22,7 @@ for epoch in range(1000):
     pred_y = 1 / (1 + np.exp(-z))
 
     # loss
-    loss = - (y * np.log(pred_y) + (1 - y) * np.log(1 - pred_y)).sum() / y.size
+    loss = - (y * np.log(pred_y) + (1 - y) * np.log(1 - pred_y)).mean()
     print('epoch {}, loss {}'.format(epoch, loss))
 
     # 计算梯度（求导）
