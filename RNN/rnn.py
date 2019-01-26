@@ -41,7 +41,7 @@ class RNNCell:
         self.grad_w_h2h = h.T.dot(self.grad_h)
         self.grad_w_i2h = i.T.dot(self.grad_h)
         self.grad_bias = self.grad_h
-        self.grad_h_in = self.grad_h.dot(self.w_h2h)
+        self.grad_h_in = self.grad_h.dot(self.w_h2h.T)
 
         return self.grad_h_in
 

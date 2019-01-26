@@ -16,20 +16,18 @@ class LSTMCell:
         self.in_size = in_size
         self.hidden_size = hidden_size
         # 输入、遗忘、输出门参数
-        self.w_ii = np.random.normal(0, 0.1, (in_size, hidden_size))
-        self.w_hi = np.random.normal(0, 0.1, (hidden_size, hidden_size))
-        self.b_i = np.random.normal(0, 0.1, (1, hidden_size))
-        self.w_if = np.random.normal(0, 0.1, (in_size, hidden_size))
-        self.w_hf = np.random.normal(0, 0.1, (hidden_size, hidden_size))
-        self.b_f = np.random.normal(0, 0.1, (1, hidden_size))
-        self.w_io = np.random.normal(0, 0.1, (in_size, hidden_size))
-        self.w_ho = np.random.normal(0, 0.1, (hidden_size, hidden_size))
-        self.b_o = np.random.normal(0, 0.1, (1, hidden_size))
+        self.w_ii, self.w_hi, self.b_i = self.init_weights(in_size, hidden_size)
+        self.w_if, self.w_hf, self.b_f = self.init_weights(in_size, hidden_size)
+        self.w_io, self.w_ho, self.b_o = self.init_weights(in_size, hidden_size)
 
         # 当前时刻前向计算参数
-        self.w_ig = np.random.normal(0, 0.1, (in_size, hidden_size))
-        self.w_hg = np.random.normal(0, 0.1, (hidden_size, hidden_size))
-        self.b_g = np.random.normal(0, 0.1, (1, hidden_size))
+        self.w_ig, self.w_hg, self.b_g = self.init_weights(in_size, hidden_size)
+
+    def init_weights(self, in_size, hidden_size, sigma=1e-2):
+        w_i2h = np.random.normal(0, sigma, (in_size, hidden_size))
+        w_h2h = np.random.normal(0, sigma, (hidden_size, hidden_size))
+        bias = np.random.normal(0, sigma, (1, hidden_size))
+        return w_i2h, w_h2h, bias
 
     def sigmoid(self, x):
         return 1 / (1 + np.exp(-x))
@@ -38,7 +36,7 @@ class LSTMCell:
         return out_sigmoid * (1 - out_sigmoid)
 
     def tanh(self, x):
-        # (np.exp(x) - np.exp(-x)) / (np.exp(x) + np.exp(-x))
+        # return (np.exp(x) - np.exp(-x)) / (np.exp(x) + np.exp(-x))
         return 2 * self.sigmoid(2 * x) - 1
 
     def tanh_grad(self, out_tanh):
@@ -67,7 +65,7 @@ class LSTMCell:
         step_output = (input_gate, forget_gate, output_gate, g_tanh, cell_tanh)
         return h_output, cell, step_output
 
-    def backward(self, grad, x, h, c, step_output):
+    def backward(self, grad, x, h, c, step_output, grad_cell=0):
         if x.ndim == 1:
             x = np.expand_dims(x, axis=0)
         if h.ndim == 1:
@@ -87,7 +85,7 @@ class LSTMCell:
         self.grad_b_o = b_ones.dot(grad_o)
 
         grad_cell_tanh = grad * output_gate
-        grad_cell = grad_cell_tanh * self.tanh_grad(cell_tanh)
+        grad_cell = grad_cell_tanh * self.tanh_grad(cell_tanh) + grad_cell
         # 遗忘门梯度
         grad_forget_gate = grad_cell * c
         grad_f = grad_forget_gate * self.sigmoid_grad(forget_gate)
@@ -110,8 +108,9 @@ class LSTMCell:
         self.grad_b_g = b_ones.dot(grad_g)
 
         # 上一个时刻隐藏层（这一层的隐藏层输入）梯度
-        grad_h_in = grad_g.dot(self.w_hg) + grad_i.dot(self.w_hi) + grad_f.dot(self.w_hf) + grad_o.dot(self.w_ho)
-        return grad_h_in
+        grad_h_in = grad_i.dot(self.w_hi.T) + grad_f.dot(self.w_hf.T) + grad_o.dot(self.w_ho.T) + grad_g.dot(self.w_hg.T)
+        grad_pre_cell = grad_cell * forget_gate
+        return grad_h_in, grad_pre_cell
 
 
 class LSTM:
@@ -142,55 +141,111 @@ class LSTM:
         self.h_output = h
         return self.h_output
 
+    def init_zero(self):
+        w_i2h = np.zeros((self.in_size, self.hidden_size))
+        w_h2h = np.zeros((self.hidden_size, self.hidden_size))
+        w_b = np.zeros((1, self.hidden_size))
+        return w_i2h, w_h2h, w_b
+
     def zero_grad(self):
         # 梯度清零
-        self.grad_w_i = np.zeros((4 * self.in_size, self.hidden_size))
-        self.grad_w_h = np.zeros((4 * self.hidden_size, self.hidden_size))
-        self.grad_b = np.zeros((4, self.hidden_size))
+        self.grad_w_ii, self.grad_w_hi, self.grad_b_i = self.init_zero()
+        self.grad_w_if, self.grad_w_hf, self.grad_b_f = self.init_zero()
+        self.grad_w_io, self.grad_w_ho, self.grad_b_o = self.init_zero()
+        self.grad_w_ig, self.grad_w_hg, self.grad_b_g = self.init_zero()
 
     def backward(self, grad):
         self.zero_grad()
+        grad_cell = 0
         for i in range(len(self.h_state_list) - 1, -1, -1):
             x = self.x[:, i, :]
             h = self.h_state_list[i]
             c = self.c_state_list[i]
             step_output = self.step_output_list[i]
-            grad = self.lstm_cell.backward(grad, x, h, c, step_output)
+            grad, grad_cell = self.lstm_cell.backward(grad, x, h, c, step_output, grad_cell)
 
             # 将所有时刻的梯度累加
-            self.grad_w_i += np.concatenate([self.lstm_cell.grad_w_ii,
-                                             self.lstm_cell.grad_w_if,
-                                             self.lstm_cell.grad_w_io,
-                                             self.lstm_cell.grad_w_ig], axis=0)
+            self.grad_w_ii += self.lstm_cell.grad_w_ii
+            self.grad_w_if += self.lstm_cell.grad_w_if
+            self.grad_w_io += self.lstm_cell.grad_w_io
+            self.grad_w_ig += self.lstm_cell.grad_w_ig
 
-            self.grad_w_h += np.concatenate([self.lstm_cell.grad_w_hi,
-                                             self.lstm_cell.grad_w_hf,
-                                             self.lstm_cell.grad_w_ho,
-                                             self.lstm_cell.grad_w_hg], axis=0)
+            self.grad_w_hi += self.lstm_cell.grad_w_hi
+            self.grad_w_hf += self.lstm_cell.grad_w_hf
+            self.grad_w_ho += self.lstm_cell.grad_w_ho
+            self.grad_w_hg += self.lstm_cell.grad_w_hg
 
-            self.grad_b += np.concatenate([self.lstm_cell.grad_b_i,
-                                           self.lstm_cell.grad_b_f,
-                                           self.lstm_cell.grad_b_o,
-                                           self.lstm_cell.grad_b_g], axis=0)
+            self.grad_b_i += self.lstm_cell.grad_b_i
+            self.grad_b_f += self.lstm_cell.grad_b_f
+            self.grad_b_o += self.lstm_cell.grad_b_o
+            self.grad_b_g += self.lstm_cell.grad_b_g
 
         return grad
 
     def update_weight(self, lr):
-        self.lstm_cell.w_ii -= lr * self.grad_w_i[: self.in_size, ]
-        self.lstm_cell.w_hi -= lr * self.grad_w_h[: self.hidden_size, ]
-        self.lstm_cell.b_i -= lr * self.grad_b[0, ]
+        self.lstm_cell.w_ii -= lr * self.grad_w_ii
+        self.lstm_cell.w_hi -= lr * self.grad_w_hi
+        self.lstm_cell.b_i -= lr * self.grad_b_i
 
-        self.lstm_cell.w_if -= lr * self.grad_w_i[self.in_size: self.in_size * 2, ]
-        self.lstm_cell.w_hf -= lr * self.grad_w_h[self.hidden_size: self.hidden_size * 2, ]
-        self.lstm_cell.b_f -= lr * self.grad_b[1, ]
+        self.lstm_cell.w_if -= lr * self.grad_w_if
+        self.lstm_cell.w_hf -= lr * self.grad_w_hf
+        self.lstm_cell.b_f -= lr * self.grad_b_f
 
-        self.lstm_cell.w_io -= lr * self.grad_w_i[self.in_size * 2: self.in_size * 3, ]
-        self.lstm_cell.w_ho -= lr * self.grad_w_h[self.hidden_size * 2: self.hidden_size * 3, ]
-        self.lstm_cell.b_o -= lr * self.grad_b[2, ]
+        self.lstm_cell.w_io -= lr * self.grad_w_io
+        self.lstm_cell.w_ho -= lr * self.grad_w_ho
+        self.lstm_cell.b_o -= lr * self.grad_b_o
 
-        self.lstm_cell.w_ig -= lr * self.grad_w_i[self.in_size * 3:, ]
-        self.lstm_cell.w_hg -= lr * self.grad_w_h[self.hidden_size * 3:, ]
-        self.lstm_cell.b_g -= lr * self.grad_b[3:, ]
+        self.lstm_cell.w_ig -= lr * self.grad_w_ig
+        self.lstm_cell.w_hg -= lr * self.grad_w_hg
+        self.lstm_cell.b_g -= lr * self.grad_b_g
 
-    def gradient_check(self):
-        pass
+    def gradient_check(self, epsilon=1e-4):
+        # 梯度检查
+        x = np.random.randn(2, self.in_size)
+        y = np.ones((1, self.hidden_size)) * 100
+
+        y_pred = self.forward(x)
+        grad_y_pred = 2. * (y_pred - y)
+        self.backward(grad_y_pred)
+
+        parameters = [self.lstm_cell.w_ii, self.lstm_cell.w_hi, self.lstm_cell.b_i,
+                      self.lstm_cell.w_if, self.lstm_cell.w_hf, self.lstm_cell.b_f,
+                      self.lstm_cell.w_io, self.lstm_cell.w_ho, self.lstm_cell.b_o,
+                      self.lstm_cell.w_ig, self.lstm_cell.w_hg, self.lstm_cell.b_g]
+        gradients = [self.grad_w_ii, self.grad_w_hi, self.grad_b_i,
+                     self.grad_w_if, self.grad_w_hf, self.grad_b_f,
+                     self.grad_w_io, self.grad_w_ho, self.grad_b_o,
+                     self.grad_w_ig, self.grad_w_hg, self.grad_b_g]
+
+        for k in range(len(parameters)):
+            w = parameters[k]
+            print('-' * 50)
+            for i in range(w.shape[0]):
+                for j in range(w.shape[1]):
+                    temp = w[i, j]
+                    w[i, j] = temp + epsilon
+                    y1 = self.forward(x)
+                    loss1 = np.square(y1 - y).sum()
+
+                    w[i, j] = temp - epsilon
+                    y2 = self.forward(x)
+                    loss2 = np.square(y2 - y).sum()
+
+                    expect_grad = (loss1 - loss2) / (2 * epsilon)
+                    backward_grad = gradients[k][i, j]
+                    w[i, j] = temp
+
+                    grad_is_ok = "OK"
+                    if abs(backward_grad - expect_grad) > 1e-4:
+                        grad_is_ok = "ERROR"
+                    print("parameter ({},{},{}) expect_grad: {:.4f} backward_grad: {:.4f} [{}]".format(
+                        k, i, j, expect_grad, backward_grad, grad_is_ok))
+
+
+def test():
+    lstm = LSTM(5, 7)
+    lstm.gradient_check()
+
+
+if __name__ == '__main__':
+    test()
